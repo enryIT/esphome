@@ -208,7 +208,7 @@ bool ESP32BLE::ble_setup_() {
     }
   }
  
-  err = esp_ble_gap_set_preferred_default_phy(ESP_BLE_GAP_PHY_OPTIONS_PREF_S8_CODING,ESP_BLE_GAP_PHY_OPTIONS_PREF_S8_CODING);
+  err = esp_ble_gap_set_preferred_default_phy(ESP_BLE_GAP_PHY_CODED_PREF_MASK,ESP_BLE_GAP_PHY_CODED_PREF_MASK);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ble_gap_set_preferred_default_phy failed: %d", err);
     return false;
