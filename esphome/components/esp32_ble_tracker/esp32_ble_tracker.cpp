@@ -46,8 +46,8 @@ void ESP32BLETracker::setup() {
     ESP_LOGE(TAG, "BLE Tracker was marked failed by ESP32BLE");
     return;
   }
-  ExternalRAMAllocator<esp_ble_gap_cb_param_t::ble_scan_result_evt_param> allocator(
-      ExternalRAMAllocator<esp_ble_gap_cb_param_t::ble_scan_result_evt_param>::ALLOW_FAILURE);
+  ExternalRAMAllocator<esp_ble_gap_cb_param_t::ble_ext_adv_scan_rsp_set_cmpl_evt_param> allocator(
+      ExternalRAMAllocator<esp_ble_gap_cb_param_t::ble_ext_adv_scan_rsp_set_cmpl_evt_param>::ALLOW_FAILURE);
   this->scan_result_buffer_ = allocator.allocate(ESP32BLETracker::SCAN_RESULT_BUFFER_SIZE);
 
   if (this->scan_result_buffer_ == nullptr) {
@@ -257,6 +257,11 @@ void ESP32BLETracker::stop_scan_() {
     ESP_LOGE(TAG, "esp_ble_gap_stop_scanning failed: %d", err);
     return;
   }
+  esp_err_t err = esp_ble_gap_stop_ext_scan();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_ble_gap_stop_ext_scan failed: %d", err);
+    return;
+  }
 }
 
 void ESP32BLETracker::start_scan_(bool first) {
@@ -276,20 +281,21 @@ void ESP32BLETracker::start_scan_(bool first) {
       listener->on_scan_end();
   }
   this->already_discovered_.clear();
-  this->scan_params_.scan_type = this->scan_active_ ? BLE_SCAN_TYPE_ACTIVE : BLE_SCAN_TYPE_PASSIVE;
-  this->scan_params_.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
-  this->scan_params_.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
-  this->scan_params_.scan_interval = this->scan_interval_;
-  this->scan_params_.scan_window = this->scan_window_;
+  this->ext_scan_params_.scan_type = this->scan_active_ ? BLE_SCAN_TYPE_ACTIVE : BLE_SCAN_TYPE_PASSIVE;
+  this->ext_scan_params_.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+  this->ext_scan_params_.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
+  this->ext_scan_params_.cfg_mask = ESP_BLE_GAP_EXT_SCAN_CFG_CODE_MASK | ESP_BLE_GAP_EXT_SCAN_CFG_UNCODE_MASK;
+  this->ext_scan_params_.scan_interval = this->scan_interval_;
+  this->ext_scan_params_.scan_window = this->scan_window_;
 
-  esp_err_t err = esp_ble_gap_set_scan_params(&this->scan_params_);
+  esp_err_t err = esp_ble_gap_set_ext_scan_params(&this->ext_scan_params_);
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gap_set_scan_params failed: %d", err);
+    ESP_LOGE(TAG, "esp_ble_gap_set_ext_scan_params failed: %d", err);
     return;
   }
-  err = esp_ble_gap_start_scanning(this->scan_duration_);
+  err = esp_ble_gap_start_ext_scan(this->scan_duration_);
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gap_start_scanning failed: %d", err);
+    ESP_LOGE(TAG, "esp_ble_gap_start_ext_scan failed: %d", err);
     return;
   }
   this->scanner_idle_ = false;
@@ -348,19 +354,31 @@ void ESP32BLETracker::recalculate_advertisement_parser_types() {
   }
 }
 
-void ESP32BLETracker::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+void ESP32BLETracker::gap_event_handler(cb_event_t event, esp_ble_gap_cb_param_t *param) {
   switch (event) {
     case ESP_GAP_BLE_SCAN_RESULT_EVT:
       this->gap_scan_result_(param->scan_rst);
       break;
+    case ESP_GAP_BLE_EXT_SCAN_RSP_DATA_SET_COMPLETE_EVT:
+      this->gap_scan_result_(param->scan_rsp_set);
+      break;
     case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
       this->gap_scan_set_param_complete_(param->scan_param_cmpl);
+      break;
+    case ESP_GAP_BLE_SET_EXT_SCAN_PARAMS_COMPLETE_EVT:
+      this->gap_scan_set_param_complete_(param->set_ext_scan_params);
       break;
     case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
       this->gap_scan_start_complete_(param->scan_start_cmpl);
       break;
+    case ESP_GAP_BLE_EXT_SCAN_START_COMPLETE_EVT:
+      this->gap_scan_start_complete_(param->ext_scan_start);
+      break;   
     case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
       this->gap_scan_stop_complete_(param->scan_stop_cmpl);
+      break;
+    case ESP_GAP_BLE_EXT_SCAN_STOP_COMPLETE_EVT:
+      this->gap_scan_stop_complete_(param->ext_scan_stop);
       break;
     default:
       break;
@@ -370,15 +388,15 @@ void ESP32BLETracker::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_ga
   }
 }
 
-void ESP32BLETracker::gap_scan_set_param_complete_(const esp_ble_gap_cb_param_t::ble_scan_param_cmpl_evt_param &param) {
-  if (param.status == ESP_BT_STATUS_DONE) {
+void ESP32BLETracker::gap_scan_set_param_complete_(const esp_ble_gap_cb_param_t::ble_set_ext_scan_params_cmpl_param &param) {
+  if (param.status == ESP_BT_STATUS_DONE) {                                      
     this->scan_set_param_failed_ = ESP_BT_STATUS_SUCCESS;
   } else {
     this->scan_set_param_failed_ = param.status;
   }
 }
 
-void ESP32BLETracker::gap_scan_start_complete_(const esp_ble_gap_cb_param_t::ble_scan_start_cmpl_evt_param &param) {
+void ESP32BLETracker::gap_scan_start_complete_(const esp_ble_gap_cb_param_t::ble_ext_scan_start_cmpl_param &param) {
   this->scan_start_failed_ = param.status;
   if (param.status == ESP_BT_STATUS_SUCCESS) {
     this->scan_start_fail_count_ = 0;
@@ -388,11 +406,11 @@ void ESP32BLETracker::gap_scan_start_complete_(const esp_ble_gap_cb_param_t::ble
   }
 }
 
-void ESP32BLETracker::gap_scan_stop_complete_(const esp_ble_gap_cb_param_t::ble_scan_stop_cmpl_evt_param &param) {
+void ESP32BLETracker::gap_scan_stop_complete_(const esp_ble_gap_cb_param_t::ble_ext_scan_stop_cmpl_param &param) {
   xSemaphoreGive(this->scan_end_lock_);
 }
 
-void ESP32BLETracker::gap_scan_result_(const esp_ble_gap_cb_param_t::ble_scan_result_evt_param &param) {
+void ESP32BLETracker::gap_scan_result_(const esp_ble_gap_cb_param_t::ble_ext_adv_scan_rsp_set_cmpl_evt_param &param) {
   if (param.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT) {
     if (xSemaphoreTake(this->scan_result_lock_, 0L)) {
       if (this->scan_result_index_ < ESP32BLETracker::SCAN_RESULT_BUFFER_SIZE) {
@@ -422,7 +440,7 @@ optional<ESPBLEiBeacon> ESPBLEiBeacon::from_manufacturer_data(const ServiceData 
   return ESPBLEiBeacon(data.data.data());
 }
 
-void ESPBTDevice::parse_scan_rst(const esp_ble_gap_cb_param_t::ble_scan_result_evt_param &param) {
+void ESPBTDevice::parse_scan_rst(const esp_ble_gap_cb_param_t::ble_ext_adv_scan_rsp_set_cmpl_evt_param &param) {
   this->scan_result_ = param;
   for (uint8_t i = 0; i < ESP_BD_ADDR_LEN; i++)
     this->address_[i] = param.bda[i];
@@ -489,7 +507,7 @@ void ESPBTDevice::parse_scan_rst(const esp_ble_gap_cb_param_t::ble_scan_result_e
   ESP_LOGVV(TAG, "  Adv data: %s", format_hex_pretty(param.ble_adv, param.adv_data_len + param.scan_rsp_len).c_str());
 #endif
 }
-void ESPBTDevice::parse_adv_(const esp_ble_gap_cb_param_t::ble_scan_result_evt_param &param) {
+void ESPBTDevice::parse_adv_(const esp_ble_gap_cb_param_t::ble_ext_adv_scan_rsp_set_cmpl_evt_param &param) {
   size_t offset = 0;
   const uint8_t *payload = param.ble_adv;
   uint8_t len = param.adv_data_len + param.scan_rsp_len;
