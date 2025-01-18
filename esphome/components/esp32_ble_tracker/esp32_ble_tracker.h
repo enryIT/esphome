@@ -238,6 +238,7 @@ class ESP32BLETracker : public Component,
   std::vector<ESPBTClient *> clients_;
   /// A structure holding the ESP BLE scan parameters.
   esp_ble_scan_params_t scan_params_;
+  esp_ble_ext_scan_params_t ext_scan_params_;
   /// The interval in seconds to perform scans.
   uint32_t scan_duration_;
   uint32_t scan_interval_;
